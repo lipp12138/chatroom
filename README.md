@@ -1,6 +1,13 @@
 # chatroom
 
-给「谁是卧底」直接出词用的 Go 包。只保留一个出词方法：不传文件就用默认词库，传本地 JSON 文件就优先用这个词库。文件不存在、读取失败或 JSON 写错时，会自动回退默认词库，并通过 `err` 返回提示。
+「谁是卧底」出词 Go 包。
+
+整个包只保留一个出词方法：
+
+```go
+pair, err := chatroom.Pick()
+pair, err := chatroom.Pick("/data/ciku/a.json")
+```
 
 ## 安装
 
@@ -8,31 +15,32 @@
 go get github.com/lipp12138/chatroom
 ```
 
-## 使用默认词库
+## 使用
 
 ```go
-pair, err := chatroom.Pick()
-if err != nil {
-	log.Println("词库提示：", err)
-}
+package main
 
-fmt.Println("平民词：", pair.Civilian)
-fmt.Println("卧底词：", pair.Undercover)
+import (
+	"fmt"
+	"log"
+
+	"github.com/lipp12138/chatroom"
+)
+
+func main() {
+	pair, err := chatroom.Pick("/data/ciku/a.json")
+	if err != nil {
+		log.Println("词库提示：", err)
+	}
+
+	fmt.Println("平民词：", pair.Civilian)
+	fmt.Println("卧底词：", pair.Undercover)
+}
 ```
 
-## 使用本地词库
+## 词库格式
 
-```go
-pair, err := chatroom.Pick("/data/ciku/a.json")
-if err != nil {
-	log.Println("词库提示：", err)
-}
-
-fmt.Println("平民词：", pair.Civilian)
-fmt.Println("卧底词：", pair.Undercover)
-```
-
-`/data/ciku/a.json` 示例：
+`/data/ciku/a.json`：
 
 ```json
 [
@@ -42,10 +50,12 @@ fmt.Println("卧底词：", pair.Undercover)
 ]
 ```
 
-说明：
+## 行为
 
-- `chatroom.Pick()`：使用内置默认词库。
-- `chatroom.Pick("/data/ciku/a.json")`：文件存在且格式正确时使用这个词库。
-- 文件不存在：自动使用默认词库，`err` 为 `nil`。
-- 文件读取失败、JSON 写错或没有有效词：自动使用默认词库，同时返回 `err`，方便你打日志提示。
-- 文件会自动缓存；文件内容修改后，下次出词会重新加载。
+- 不传文件：使用内置默认词库。
+- 传文件且文件正常：使用本地词库。
+- 文件不存在：使用默认词库，`err == nil`。
+- 文件读取失败、JSON 写错、没有有效词：使用默认词库，同时返回 `err`，方便你打日志。
+- 文件会缓存；文件内容修改后，下次 `Pick` 会自动重新加载。
+
+不停服务更新词库时，建议先写临时文件，再重命名覆盖正式文件，避免服务读到写了一半的 JSON。
