@@ -41,11 +41,16 @@ type cachedPicker struct {
 //
 // If file is empty, Pick uses the built-in word library. If file is provided
 // and exists, Pick uses that local JSON word library. If file is provided but
-// does not exist, Pick falls back to the built-in word library.
+// does not exist, Pick falls back to the built-in word library. If file exists
+// but cannot be loaded, Pick returns a built-in word pair and the load error.
 func Pick(file ...string) (Pair, error) {
 	p, err := pickerFor(file...)
 	if err != nil {
-		return Pair{}, err
+		pair, pickErr := defaultPicker.pick()
+		if pickErr != nil {
+			return Pair{}, errors.Join(err, pickErr)
+		}
+		return pair, err
 	}
 	return p.pick()
 }
