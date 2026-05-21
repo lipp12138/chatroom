@@ -71,8 +71,8 @@ func TestRoundRejectsInvalidPlayerCount(t *testing.T) {
 func TestLoadFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "words.json")
 	err := os.WriteFile(path, []byte(`[
-		{"civilian":"苹果","undercover":"梨"},
-		{"civilian":"可乐","undercover":"雪碧"}
+		{"civilian":"apple","undercover":"pear"},
+		{"civilian":"cola","undercover":"soda"}
 	]`), 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestLoadFile(t *testing.T) {
 func TestLoadURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"civilian":"火锅","undercover":"麻辣烫"}]`))
+		_, _ = w.Write([]byte(`[{"civilian":"hotpot","undercover":"malatang"}]`))
 	}))
 	defer server.Close()
 
@@ -108,13 +108,62 @@ func TestLoadURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pick failed: %v", err)
 	}
-	if pair.Civilian != "火锅" || pair.Undercover != "麻辣烫" {
+	if pair.Civilian != "hotpot" || pair.Undercover != "malatang" {
 		t.Fatalf("unexpected pair: %+v", pair)
 	}
 }
 
+func TestLoadConfigUsesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "words.json")
+	err := os.WriteFile(path, []byte(`[{"civilian":"custom","undercover":"word"}]`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	picker, err := Load(Config{File: path})
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+
+	pair, err := picker.Pick()
+	if err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+	if pair.Civilian != "custom" || pair.Undercover != "word" {
+		t.Fatalf("unexpected pair: %+v", pair)
+	}
+}
+
+func TestLoadConfigFallsBackToDefault(t *testing.T) {
+	picker, err := Load(Config{File: filepath.Join(t.TempDir(), "missing.json")})
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+
+	pair, err := picker.Pick()
+	if err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+	if pair.Civilian == "" || pair.Undercover == "" {
+		t.Fatalf("empty pair: %+v", pair)
+	}
+}
+
+func TestLoadConfigReturnsInvalidFileError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.json")
+	err := os.WriteFile(path, []byte(`not json`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Load(Config{File: path})
+	if err == nil {
+		t.Fatal("expected invalid json error")
+	}
+}
+
 func TestNewRejectsEmptyLibrary(t *testing.T) {
-	_, err := New([]Pair{{Civilian: "苹果", Undercover: "苹果"}})
+	_, err := New([]Pair{{Civilian: "same", Undercover: "same"}})
 	if err != ErrNoPairs {
 		t.Fatalf("expected ErrNoPairs, got %v", err)
 	}

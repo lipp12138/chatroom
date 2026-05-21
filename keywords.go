@@ -34,6 +34,16 @@ type RoundResult struct {
 	Roles []Role `json:"roles"`
 }
 
+// Config controls which word library is loaded.
+type Config struct {
+	// File is a local JSON word library path.
+	//
+	// If File is empty or does not exist, Load falls back to the built-in
+	// library. If File exists but cannot be read or parsed, Load returns the
+	// error so bad custom libraries are not silently ignored.
+	File string `json:"file"`
+}
+
 var (
 	ErrNoPairs       = errors.New("chatroom: no word pairs")
 	ErrInvalidPlayer = errors.New("chatroom: invalid player count")
@@ -61,11 +71,36 @@ func Round(playerCount, undercoverCount int) (RoundResult, error) {
 	return defaultPicker.Round(playerCount, undercoverCount)
 }
 
+// Default returns a picker backed by the built-in word library.
+func Default() *Picker {
+	return mustNew(defaultPairs)
+}
+
 // All returns a copy of the built-in word library.
 func All() []Pair {
 	out := make([]Pair, len(defaultPairs))
 	copy(out, defaultPairs)
 	return out
+}
+
+// Load creates a picker from config.
+//
+// If config.File is empty or the file does not exist, Load uses the built-in
+// word library. Use this for app startup configuration.
+func Load(config Config) (*Picker, error) {
+	path := strings.TrimSpace(config.File)
+	if path == "" {
+		return Default(), nil
+	}
+
+	picker, err := LoadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Default(), nil
+		}
+		return nil, err
+	}
+	return picker, nil
 }
 
 // New creates a picker from custom pairs.
