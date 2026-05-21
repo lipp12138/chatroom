@@ -1,25 +1,31 @@
-package keywords
+package chatroom
 
 import "testing"
 
-func TestDefaultBank(t *testing.T) {
-	b := Default()
-	if b.Len() < 200 {
-		t.Fatalf("default bank too small: %d", b.Len())
+func TestPick(t *testing.T) {
+	pair := Pick()
+	if pair.Civilian == "" || pair.Undercover == "" {
+		t.Fatalf("empty pair: %+v", pair)
+	}
+	if pair.Civilian == pair.Undercover {
+		t.Fatalf("same words: %+v", pair)
+	}
+}
+
+func TestAll(t *testing.T) {
+	pairs := All()
+	if len(pairs) < 200 {
+		t.Fatalf("default library too small: %d", len(pairs))
 	}
 
-	pair, err := b.Pick(WithCategory("food"), WithDifficulty(Easy))
-	if err != nil {
-		t.Fatalf("pick failed: %v", err)
-	}
-	if pair.Category != "food" || pair.Difficulty != Easy {
-		t.Fatalf("unexpected pair: %+v", pair)
+	pairs[0].Civilian = ""
+	if All()[0].Civilian == "" {
+		t.Fatal("All must return a copy")
 	}
 }
 
 func TestRound(t *testing.T) {
-	b := Default()
-	round, err := b.Round(8, 2)
+	round, err := Round(8, 2)
 	if err != nil {
 		t.Fatalf("round failed: %v", err)
 	}
@@ -48,9 +54,9 @@ func TestRound(t *testing.T) {
 	}
 }
 
-func TestNewRejectsInvalidPair(t *testing.T) {
-	_, err := New([]Pair{{Civilian: "苹果", Undercover: "苹果"}})
-	if err != ErrInvalidPair {
-		t.Fatalf("expected ErrInvalidPair, got %v", err)
+func TestRoundRejectsInvalidPlayerCount(t *testing.T) {
+	_, err := Round(2, 1)
+	if err != ErrInvalidPlayer {
+		t.Fatalf("expected ErrInvalidPlayer, got %v", err)
 	}
 }
