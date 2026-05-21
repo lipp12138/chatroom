@@ -2,11 +2,11 @@
 
 「谁是卧底」出词 Go 包。
 
-整个包只保留一个出词方法：
+运行时只有两个动作：
 
 ```go
-pair, err := chatroom.Pick()
-pair, err := chatroom.Pick("/data/ciku/a.json")
+chatroom.Update("/data/ciku/a.txt") // 更新词库时调用
+pair, err := chatroom.Pick()        // 出词时调用，不读文件
 ```
 
 ## 安装
@@ -28,9 +28,13 @@ import (
 )
 
 func main() {
-	pair, err := chatroom.Pick("/data/ciku/a.json")
+	if err := chatroom.Update("/data/ciku/a.txt"); err != nil {
+		log.Println("词库更新失败，已使用默认词库：", err)
+	}
+
+	pair, err := chatroom.Pick()
 	if err != nil {
-		log.Println("词库提示：", err)
+		panic(err)
 	}
 
 	fmt.Println("平民词：", pair.Civilian)
@@ -38,9 +42,23 @@ func main() {
 }
 ```
 
-## 词库格式
+## TXT 词库格式
 
-`/data/ciku/a.json`：
+`/data/ciku/a.txt`：
+
+```txt
+苹果,梨
+可乐,雪碧
+火锅,麻辣烫
+```
+
+也支持这些分隔符：英文逗号 `,`、中文逗号 `，`、竖线 `|`、Tab。
+
+空行和 `#` 开头的注释行会被忽略。
+
+## JSON 词库格式
+
+如果文件后缀是 `.json`，也可以用 JSON：
 
 ```json
 [
@@ -52,10 +70,10 @@ func main() {
 
 ## 行为
 
-- 不传文件：使用内置默认词库。
-- 传文件且文件正常：使用本地词库。
-- 文件不存在：使用默认词库，`err == nil`。
-- 文件读取失败、JSON 写错、没有有效词：使用默认词库，同时返回 `err`，方便你打日志。
-- 文件会缓存；文件内容修改后，下次 `Pick` 会自动重新加载。
+- `chatroom.Pick()` 只从内存出词，不读取文件。
+- `chatroom.Update(path)` 才会读取本地词库文件。
+- `Update` 成功后，后续 `Pick` 使用新词库。
+- `Update` 失败时，自动回退默认词库，并返回 `err` 方便打日志。
+- 不停服务更新词库时，改完文件后再调用一次 `Update(path)` 即可。
 
-不停服务更新词库时，建议先写临时文件，再重命名覆盖正式文件，避免服务读到写了一半的 JSON。
+推荐更新文件时先写临时文件，再重命名覆盖正式文件，避免服务读到写了一半的内容。

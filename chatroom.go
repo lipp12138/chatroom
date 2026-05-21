@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -21,8 +22,8 @@ var (
 	errNoPairs = errors.New("chatroom: no word pairs")
 
 	defaultPicker = mustNewPicker(defaultPairs)
-	fileCache     = make(map[string]cachedPicker)
-	fileCacheMu   sync.Mutex
+	activePicker  = defaultPicker
+	activeMu      sync.RWMutex
 )
 
 type picker struct {
@@ -31,69 +32,44 @@ type picker struct {
 	mu    sync.Mutex
 }
 
-type cachedPicker struct {
-	modTime time.Time
-	size    int64
-	picker  *picker
-}
-
-// Pick returns a random word pair.
+// Update loads a local word library into memory.
 //
-// If file is empty, Pick uses the built-in word library. If file is provided
-// and exists, Pick uses that local JSON word library. If file is provided but
-// does not exist, Pick falls back to the built-in word library. If file exists
-// but cannot be loaded, Pick returns a built-in word pair and the load error.
-func Pick(file ...string) (Pair, error) {
-	p, err := pickerFor(file...)
-	if err != nil {
-		pair, pickErr := defaultPicker.pick()
-		if pickErr != nil {
-			return Pair{}, errors.Join(err, pickErr)
-		}
-		return pair, err
+// Supported formats:
+//   - .txt: one pair per line, for example: 苹果,梨
+//   - .json: [{"civilian":"苹果","undercover":"梨"}]
+//
+// If loading fails, Update switches back to the built-in default library and
+// returns the error. Pick never reads files; it only uses the in-memory library.
+func Update(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		setActive(defaultPicker)
+		return nil
 	}
-	return p.pick()
-}
-
-func pickerFor(file ...string) (*picker, error) {
-	if len(file) == 0 || strings.TrimSpace(file[0]) == "" {
-		return defaultPicker, nil
-	}
-
-	path := strings.TrimSpace(file[0])
-	info, err := os.Stat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return defaultPicker, nil
-		}
-		return nil, err
-	}
-	if info.IsDir() {
-		return defaultPicker, nil
-	}
-
-	fileCacheMu.Lock()
-	cached, ok := fileCache[path]
-	if ok && cached.modTime.Equal(info.ModTime()) && cached.size == info.Size() {
-		fileCacheMu.Unlock()
-		return cached.picker, nil
-	}
-	fileCacheMu.Unlock()
 
 	p, err := loadFile(path)
 	if err != nil {
-		return nil, err
+		setActive(defaultPicker)
+		return err
 	}
 
-	fileCacheMu.Lock()
-	fileCache[path] = cachedPicker{
-		modTime: info.ModTime(),
-		size:    info.Size(),
-		picker:  p,
-	}
-	fileCacheMu.Unlock()
+	setActive(p)
+	return nil
+}
 
-	return p, nil
+// Pick returns a random word pair from the in-memory word library.
+func Pick() (Pair, error) {
+	activeMu.RLock()
+	p := activePicker
+	activeMu.RUnlock()
+
+	return p.pick()
+}
+
+func setActive(p *picker) {
+	activeMu.Lock()
+	activePicker = p
+	activeMu.Unlock()
 }
 
 func loadFile(path string) (*picker, error) {
@@ -102,11 +78,54 @@ func loadFile(path string) (*picker, error) {
 		return nil, err
 	}
 
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		return loadJSON(data)
+	}
+	return loadText(data)
+}
+
+func loadJSON(data []byte) (*picker, error) {
 	var pairs []Pair
 	if err := json.Unmarshal(data, &pairs); err != nil {
 		return nil, err
 	}
 	return newPicker(pairs)
+}
+
+func loadText(data []byte) (*picker, error) {
+	lines := strings.Split(string(data), "\n")
+	pairs := make([]Pair, 0, len(lines))
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		pair, ok := parseTextLine(line)
+		if ok {
+			pairs = append(pairs, pair)
+		}
+	}
+
+	return newPicker(pairs)
+}
+
+func parseTextLine(line string) (Pair, bool) {
+	for _, sep := range []string{",", "，", "|", "\t"} {
+		left, right, ok := strings.Cut(line, sep)
+		if !ok {
+			continue
+		}
+
+		pair := Pair{
+			Civilian:   strings.TrimSpace(left),
+			Undercover: strings.TrimSpace(right),
+		}
+		return pair, pair.Civilian != "" && pair.Undercover != ""
+	}
+
+	return Pair{}, false
 }
 
 func newPicker(pairs []Pair) (*picker, error) {

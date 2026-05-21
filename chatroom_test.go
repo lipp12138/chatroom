@@ -7,6 +7,8 @@ import (
 )
 
 func TestPickUsesDefaultLibrary(t *testing.T) {
+	resetDefault(t)
+
 	pair, err := Pick()
 	if err != nil {
 		t.Fatalf("pick failed: %v", err)
@@ -14,112 +16,146 @@ func TestPickUsesDefaultLibrary(t *testing.T) {
 	assertValidPair(t, pair)
 }
 
-func TestPickUsesFileLibrary(t *testing.T) {
+func TestUpdateUsesTextLibrary(t *testing.T) {
+	resetDefault(t)
+
+	path := filepath.Join(t.TempDir(), "words.txt")
+	err := os.WriteFile(path, []byte("custom,word\napple|pear\n# comment\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	pair, err := Pick()
+	if err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+	if pair.Civilian != "custom" && pair.Civilian != "apple" {
+		t.Fatalf("unexpected text pair: %+v", pair)
+	}
+}
+
+func TestUpdateUsesJSONLibrary(t *testing.T) {
+	resetDefault(t)
+
 	path := filepath.Join(t.TempDir(), "words.json")
 	err := os.WriteFile(path, []byte(`[{"civilian":"custom","undercover":"word"}]`), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pair, err := Pick(path)
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	pair, err := Pick()
 	if err != nil {
 		t.Fatalf("pick failed: %v", err)
 	}
 	if pair.Civilian != "custom" || pair.Undercover != "word" {
-		t.Fatalf("unexpected pair: %+v", pair)
+		t.Fatalf("unexpected json pair: %+v", pair)
 	}
 }
 
-func TestPickFallsBackWhenFileDoesNotExist(t *testing.T) {
-	pair, err := Pick(filepath.Join(t.TempDir(), "missing.json"))
+func TestUpdateReloadsOnlyWhenCalled(t *testing.T) {
+	resetDefault(t)
+
+	path := filepath.Join(t.TempDir(), "words.txt")
+	err := os.WriteFile(path, []byte("first,one\n"), 0644)
 	if err != nil {
-		t.Fatalf("pick failed: %v", err)
+		t.Fatal(err)
 	}
-	assertValidPair(t, pair)
-}
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
 
-func TestPickReloadsChangedFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "words.json")
-	err := os.WriteFile(path, []byte(`[{"civilian":"first","undercover":"one"}]`), 0644)
+	err = os.WriteFile(path, []byte("second,two\n"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pair, err := Pick(path)
+	pair, err := Pick()
 	if err != nil {
 		t.Fatalf("pick failed: %v", err)
 	}
 	if pair.Civilian != "first" || pair.Undercover != "one" {
-		t.Fatalf("unexpected first pair: %+v", pair)
+		t.Fatalf("pick should keep in-memory library until Update is called: %+v", pair)
 	}
 
-	err = os.WriteFile(path, []byte(`[{"civilian":"second","undercover":"two"}]`), 0644)
-	if err != nil {
-		t.Fatal(err)
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
 	}
-
-	pair, err = Pick(path)
+	pair, err = Pick()
 	if err != nil {
 		t.Fatalf("pick failed: %v", err)
 	}
 	if pair.Civilian != "second" || pair.Undercover != "two" {
-		t.Fatalf("unexpected second pair: %+v", pair)
+		t.Fatalf("unexpected reloaded pair: %+v", pair)
 	}
 }
 
-func TestPickFallsBackAndReturnsInvalidFileError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.json")
-	err := os.WriteFile(path, []byte(`not json`), 0644)
+func TestUpdateFailureFallsBackToDefault(t *testing.T) {
+	resetDefault(t)
+
+	path := filepath.Join(t.TempDir(), "words.txt")
+	err := os.WriteFile(path, []byte("custom,word\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	badPath := filepath.Join(t.TempDir(), "bad.txt")
+	err = os.WriteFile(badPath, []byte("same,same\n"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pair, err := Pick(path)
-	if err == nil {
-		t.Fatal("expected invalid json error")
-	}
-	assertValidPair(t, pair)
-}
-
-func TestPickFallsBackAndReturnsEmptyLibraryError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "empty.json")
-	err := os.WriteFile(path, []byte(`[{"civilian":"same","undercover":"same"}]`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	pair, err := Pick(path)
-	if err != errNoPairs {
+	if err := Update(badPath); err != errNoPairs {
 		t.Fatalf("expected errNoPairs, got %v", err)
 	}
-	assertValidPair(t, pair)
-}
 
-func TestPickFallsBackWhenChangedFileBecomesInvalid(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "words.json")
-	err := os.WriteFile(path, []byte(`[{"civilian":"custom","undercover":"word"}]`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	pair, err := Pick(path)
+	pair, err := Pick()
 	if err != nil {
 		t.Fatalf("pick failed: %v", err)
 	}
-	if pair.Civilian != "custom" || pair.Undercover != "word" {
-		t.Fatalf("unexpected custom pair: %+v", pair)
+	assertValidPair(t, pair)
+	if pair.Civilian == "custom" || pair.Undercover == "word" {
+		t.Fatalf("expected default library after update failure, got %+v", pair)
 	}
+}
 
-	err = os.WriteFile(path, []byte(`not json`), 0644)
+func TestUpdateEmptyPathResetsDefault(t *testing.T) {
+	resetDefault(t)
+
+	path := filepath.Join(t.TempDir(), "words.txt")
+	err := os.WriteFile(path, []byte("custom,word\n"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if err := Update(""); err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
 
-	pair, err = Pick(path)
-	if err == nil {
-		t.Fatal("expected invalid json error")
+	pair, err := Pick()
+	if err != nil {
+		t.Fatalf("pick failed: %v", err)
 	}
 	assertValidPair(t, pair)
+}
+
+func resetDefault(t *testing.T) {
+	t.Helper()
+	if err := Update(""); err != nil {
+		t.Fatalf("reset default failed: %v", err)
+	}
 }
 
 func assertValidPair(t *testing.T, pair Pair) {
