@@ -2,8 +2,15 @@
 package chatroom
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math/rand"
+	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,10 +38,13 @@ var (
 	ErrNoPairs       = errors.New("chatroom: no word pairs")
 	ErrInvalidPlayer = errors.New("chatroom: invalid player count")
 
-	defaultBank = newBank(defaultPairs)
+	defaultPicker = mustNew(defaultPairs)
 )
 
-type bank struct {
+// Picker stores a loaded word library.
+//
+// Create it once with New, LoadFile, or LoadURL, then reuse it.
+type Picker struct {
 	pairs []Pair
 	rng   *rand.Rand
 	mu    sync.Mutex
@@ -42,13 +52,13 @@ type bank struct {
 
 // Pick returns a random word pair.
 func Pick() Pair {
-	pair, _ := defaultBank.pick()
+	pair, _ := defaultPicker.Pick()
 	return pair
 }
 
 // Round creates shuffled player assignments for one game.
 func Round(playerCount, undercoverCount int) (RoundResult, error) {
-	return defaultBank.round(playerCount, undercoverCount)
+	return defaultPicker.Round(playerCount, undercoverCount)
 }
 
 // All returns a copy of the built-in word library.
@@ -58,11 +68,14 @@ func All() []Pair {
 	return out
 }
 
-func newBank(pairs []Pair) *bank {
+// New creates a picker from custom pairs.
+func New(pairs []Pair) (*Picker, error) {
 	cleaned := make([]Pair, 0, len(pairs))
 	seen := make(map[string]struct{}, len(pairs))
 
 	for _, pair := range pairs {
+		pair.Civilian = strings.TrimSpace(pair.Civilian)
+		pair.Undercover = strings.TrimSpace(pair.Undercover)
 		if pair.Civilian == "" || pair.Undercover == "" || pair.Civilian == pair.Undercover {
 			continue
 		}
@@ -74,30 +87,84 @@ func newBank(pairs []Pair) *bank {
 		cleaned = append(cleaned, pair)
 	}
 
-	return &bank{
+	if len(cleaned) == 0 {
+		return nil, ErrNoPairs
+	}
+
+	return &Picker{
 		pairs: cleaned,
 		rng:   rand.New(rand.NewSource(time.Now().UnixNano())),
-	}
+	}, nil
 }
 
-func (b *bank) pick() (Pair, error) {
-	if b == nil || len(b.pairs) == 0 {
+// LoadJSON loads pairs from JSON.
+//
+// Expected format:
+//
+//	[
+//	  {"civilian":"苹果","undercover":"梨"},
+//	  {"civilian":"可乐","undercover":"雪碧"}
+//	]
+func LoadJSON(r io.Reader) (*Picker, error) {
+	var pairs []Pair
+	if err := json.NewDecoder(r).Decode(&pairs); err != nil {
+		return nil, err
+	}
+	return New(pairs)
+}
+
+// LoadFile loads pairs from a local JSON file.
+func LoadFile(path string) (*Picker, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return LoadJSON(file)
+}
+
+// LoadURL loads pairs from a remote JSON API.
+func LoadURL(ctx context.Context, url string) (*Picker, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("chatroom: load url failed: %s", resp.Status)
+	}
+
+	return LoadJSON(resp.Body)
+}
+
+// Pick returns a random word pair from this picker.
+func (p *Picker) Pick() (Pair, error) {
+	if p == nil || len(p.pairs) == 0 {
 		return Pair{}, ErrNoPairs
 	}
 
-	b.mu.Lock()
-	pair := b.pairs[b.rng.Intn(len(b.pairs))]
-	b.mu.Unlock()
+	p.mu.Lock()
+	pair := p.pairs[p.rng.Intn(len(p.pairs))]
+	p.mu.Unlock()
 
 	return pair, nil
 }
 
-func (b *bank) round(playerCount, undercoverCount int) (RoundResult, error) {
+// Round creates shuffled player assignments from this picker's word library.
+func (p *Picker) Round(playerCount, undercoverCount int) (RoundResult, error) {
 	if playerCount < 3 || undercoverCount < 1 || undercoverCount >= playerCount {
 		return RoundResult{}, ErrInvalidPlayer
 	}
 
-	pair, err := b.pick()
+	pair, err := p.Pick()
 	if err != nil {
 		return RoundResult{}, err
 	}
@@ -114,15 +181,23 @@ func (b *bank) round(playerCount, undercoverCount int) (RoundResult, error) {
 		roles[i].IsUndercover = true
 	}
 
-	b.mu.Lock()
-	b.rng.Shuffle(len(roles), func(i, j int) {
+	p.mu.Lock()
+	p.rng.Shuffle(len(roles), func(i, j int) {
 		roles[i], roles[j] = roles[j], roles[i]
 	})
-	b.mu.Unlock()
+	p.mu.Unlock()
 
 	for i := range roles {
 		roles[i].Player = i + 1
 	}
 
 	return RoundResult{Pair: pair, Roles: roles}, nil
+}
+
+func mustNew(pairs []Pair) *Picker {
+	picker, err := New(pairs)
+	if err != nil {
+		panic(err)
+	}
+	return picker
 }
