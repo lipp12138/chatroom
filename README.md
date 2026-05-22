@@ -15,6 +15,20 @@ pair, err := chatroom.Pick()        // 出词时调用，不读文件
 go get github.com/lipp12138/chatroom
 ```
 
+## 已备好词库
+
+仓库里已经准备了一份可直接使用的 txt 题库：
+
+```text
+data/ciku/a.txt
+```
+
+里面包含 500+ 组题，覆盖食物饮品、日常用品、社交名场面、职场沟通、网络生活、悬疑推理、影视综艺感等场景。你可以直接加载：
+
+```go
+_ = chatroom.Update("data/ciku/a.txt")
+```
+
 ## 使用
 
 ```go

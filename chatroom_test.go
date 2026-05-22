@@ -38,6 +38,20 @@ func TestUpdateUsesTextLibrary(t *testing.T) {
 	}
 }
 
+func TestBundledTextLibrary(t *testing.T) {
+	resetDefault(t)
+
+	if err := Update(filepath.Join("data", "ciku", "a.txt")); err != nil {
+		t.Fatalf("update bundled text library failed: %v", err)
+	}
+
+	pair, err := Pick()
+	if err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+	assertValidPair(t, pair)
+}
+
 func TestUpdateUsesJSONLibrary(t *testing.T) {
 	resetDefault(t)
 
