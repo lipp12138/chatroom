@@ -6,7 +6,7 @@
 
 ```go
 chatroom.Update("/data/ciku/a.txt") // 更新词库时调用
-pair, err := chatroom.Pick()        // 出词时调用，不读文件
+pair, err := chatroom.Pick("room-1") // 出词时调用，不读文件
 ```
 
 ## 安装
@@ -46,7 +46,7 @@ func main() {
 		log.Println("词库更新失败，已使用默认词库：", err)
 	}
 
-	pair, err := chatroom.Pick()
+	pair, err := chatroom.Pick("room-1001")
 	if err != nil {
 		panic(err)
 	}
@@ -85,6 +85,9 @@ func main() {
 ## 行为
 
 - `chatroom.Pick()` 只从内存出词，不读取文件。
+- `chatroom.Pick("房间号")` 会按房间记录最近出过的词；同一个房间最近 5 次不会重复。
+- 不同房间的出词记录互不影响。
+- 房间记录只存在内存里，超过 2 小时没有使用会自动清理。
 - `chatroom.Update(path)` 才会读取本地词库文件。
 - `Update` 成功后，后续 `Pick` 使用新词库。
 - `Update` 失败时，自动回退默认词库，并返回 `err` 方便打日志。

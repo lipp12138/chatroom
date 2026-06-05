@@ -24,12 +24,29 @@ var (
 	defaultPicker = mustNewPicker(defaultPairs)
 	activePicker  = defaultPicker
 	activeMu      sync.RWMutex
+
+	roomTTL       = 2 * time.Hour
+	recentLimit   = 5
+	defaultRoom   = "_default"
+	roomHistories = make(map[string]*roomHistory)
+	roomMu        sync.Mutex
 )
 
 type picker struct {
-	pairs []Pair
+	pairs []wordPair
 	rng   *rand.Rand
 	mu    sync.Mutex
+}
+
+type wordPair struct {
+	pair Pair
+	key  string
+}
+
+type roomHistory struct {
+	recent    []string
+	recentSet map[string]struct{}
+	lastUsed  time.Time
 }
 
 // Update loads a local word library into memory.
@@ -58,18 +75,52 @@ func Update(path string) error {
 }
 
 // Pick returns a random word pair from the in-memory word library.
-func Pick() (Pair, error) {
+//
+// Pass a room id to keep recent words independent between rooms. The same room
+// will not repeat a word pair within its latest 5 successful picks when the
+// active library has enough pairs.
+func Pick(roomID ...string) (Pair, error) {
 	activeMu.RLock()
 	p := activePicker
 	activeMu.RUnlock()
 
-	return p.pick()
+	now := time.Now()
+	room := normalizeRoom(roomID...)
+
+	roomMu.Lock()
+	defer roomMu.Unlock()
+
+	cleanupRoomsLocked(now)
+	history := roomHistories[room]
+	if history == nil {
+		history = newRoomHistory()
+		roomHistories[room] = history
+	}
+	history.lastUsed = now
+
+	pair, key, err := p.pickAvoid(history.recentSet)
+	if err != nil {
+		return Pair{}, err
+	}
+
+	history.remember(key)
+	return pair, nil
+}
+
+func newRoomHistory() *roomHistory {
+	return &roomHistory{
+		recentSet: make(map[string]struct{}, recentLimit),
+	}
 }
 
 func setActive(p *picker) {
 	activeMu.Lock()
 	activePicker = p
 	activeMu.Unlock()
+
+	roomMu.Lock()
+	roomHistories = make(map[string]*roomHistory)
+	roomMu.Unlock()
 }
 
 func loadFile(path string) (*picker, error) {
@@ -150,22 +201,92 @@ func newPicker(pairs []Pair) (*picker, error) {
 		return nil, errNoPairs
 	}
 
+	words := make([]wordPair, 0, len(cleaned))
+	for _, pair := range cleaned {
+		words = append(words, wordPair{
+			pair: pair,
+			key:  pairKey(pair),
+		})
+	}
+
 	return &picker{
-		pairs: cleaned,
+		pairs: words,
 		rng:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
 func (p *picker) pick() (Pair, error) {
+	pair, _, err := p.pickAvoid(nil)
+	return pair, err
+}
+
+func (p *picker) pickAvoid(avoid map[string]struct{}) (Pair, string, error) {
 	if p == nil || len(p.pairs) == 0 {
-		return Pair{}, errNoPairs
+		return Pair{}, "", errNoPairs
 	}
 
 	p.mu.Lock()
-	pair := p.pairs[p.rng.Intn(len(p.pairs))]
+	usableAvoid := avoid
+	if len(usableAvoid) >= len(p.pairs) {
+		usableAvoid = nil
+	}
+
+	var picked wordPair
+	for {
+		picked = p.pairs[p.rng.Intn(len(p.pairs))]
+		if _, found := usableAvoid[picked.key]; !found {
+			break
+		}
+	}
 	p.mu.Unlock()
 
-	return pair, nil
+	return picked.pair, picked.key, nil
+}
+
+func normalizeRoom(roomID ...string) string {
+	if len(roomID) == 0 {
+		return defaultRoom
+	}
+
+	room := strings.TrimSpace(roomID[0])
+	if room == "" {
+		return defaultRoom
+	}
+	return room
+}
+
+func cleanupRoomsLocked(now time.Time) {
+	for room, history := range roomHistories {
+		if now.Sub(history.lastUsed) > roomTTL {
+			delete(roomHistories, room)
+		}
+	}
+}
+
+func (h *roomHistory) remember(key string) {
+	h.recent = append(h.recent, key)
+	h.recentSet[key] = struct{}{}
+	if len(h.recent) > recentLimit {
+		old := h.recent[0]
+		copy(h.recent, h.recent[1:])
+		h.recent = h.recent[:recentLimit]
+		if !containsString(h.recent, old) {
+			delete(h.recentSet, old)
+		}
+	}
+}
+
+func pairKey(pair Pair) string {
+	return pair.Civilian + "\x00" + pair.Undercover
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func mustNewPicker(pairs []Pair) *picker {

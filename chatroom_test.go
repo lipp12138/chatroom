@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPickUsesDefaultLibrary(t *testing.T) {
@@ -163,6 +164,92 @@ func TestUpdateEmptyPathResetsDefault(t *testing.T) {
 		t.Fatalf("pick failed: %v", err)
 	}
 	assertValidPair(t, pair)
+}
+
+func TestPickAvoidsRecentFivePairsInSameRoom(t *testing.T) {
+	resetDefault(t)
+
+	path := filepath.Join(t.TempDir(), "words.txt")
+	err := os.WriteFile(path, []byte("a,1\nb,2\nc,3\nd,4\ne,5\nf,6\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	recent := make([]string, 0, recentLimit)
+	for i := 0; i < 30; i++ {
+		pair, err := Pick("room-a")
+		if err != nil {
+			t.Fatalf("pick failed: %v", err)
+		}
+
+		key := pairKey(pair)
+		for _, old := range recent {
+			if key == old {
+				t.Fatalf("pair repeated within recent %d picks: %+v", recentLimit, pair)
+			}
+		}
+
+		recent = append(recent, key)
+		if len(recent) > recentLimit {
+			recent = recent[1:]
+		}
+	}
+}
+
+func TestPickRoomHistoriesAreIndependent(t *testing.T) {
+	resetDefault(t)
+
+	path := filepath.Join(t.TempDir(), "words.txt")
+	err := os.WriteFile(path, []byte("a,1\nb,2\nc,3\nd,4\ne,5\nf,6\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(path); err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	if _, err := Pick("room-a"); err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+	if _, err := Pick("room-b"); err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+
+	roomMu.Lock()
+	defer roomMu.Unlock()
+
+	if roomHistories["room-a"] == nil || roomHistories["room-b"] == nil {
+		t.Fatalf("expected independent room histories, got %+v", roomHistories)
+	}
+}
+
+func TestRoomHistoryExpires(t *testing.T) {
+	resetDefault(t)
+
+	if _, err := Pick("old-room"); err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+
+	roomMu.Lock()
+	roomHistories["old-room"].lastUsed = time.Now().Add(-roomTTL - time.Minute)
+	roomMu.Unlock()
+
+	if _, err := Pick("new-room"); err != nil {
+		t.Fatalf("pick failed: %v", err)
+	}
+
+	roomMu.Lock()
+	defer roomMu.Unlock()
+
+	if roomHistories["old-room"] != nil {
+		t.Fatal("expected old room history to be cleaned up")
+	}
+	if roomHistories["new-room"] == nil {
+		t.Fatal("expected new room history to exist")
+	}
 }
 
 func resetDefault(t *testing.T) {
